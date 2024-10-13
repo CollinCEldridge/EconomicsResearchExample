@@ -1,4 +1,4 @@
-# HallReplicationStudy
+# Hall Replication Study
 
 This repository contains the data files and R Markdown file I used to write my report, "A Replication of Robert Hall's Permanent Income Hypothesis Study", for my Advanced Topics in Macroeconomics and Finance seminar at Carleton College. 
 A PDF of the final report is also included. The Introduction to the report is included below.
