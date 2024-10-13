@@ -1,0 +1,243 @@
+---
+title: "A Replication of Robert Hall's Permanent Income Hypothesis Study"
+author: "Collin Eldridge"
+bibliography: references.bib
+csl: apa.csl
+indent: yes
+header-includes: \usepackage{dcolumn}
+output: 
+  pdf_document:
+    number_sections: true
+---
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(eval = TRUE,
+                      echo = FALSE)
+```
+
+```{r}
+# Data preparation
+
+# Load packages
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(car))
+suppressPackageStartupMessages(library(stargazer))
+suppressPackageStartupMessages(library(here)) # for ease of replication
+
+# Load data (all quarterly)
+pce_serv <- read.csv(file = here("Data/PCESV.csv"))
+pce_nondur <- read.csv(file = here("Data/PCND.csv"))
+pce_price_index <- read.csv(file = here("Data/PCECTPI.csv"))
+pop <- read.csv(file = here("Data/CNP16OV.csv"))
+nom_dpi <- read.csv(file = here("Data/DSPI.csv"))
+
+# Create single dataframe with all variables,
+# change some names for convenience
+hall_data_approx <- data.frame(pce_serv$DATE, 
+                               pce_serv$PCESV,
+                               pce_nondur$PCND,
+                               pce_price_index$PCECTPI, 
+                               pop$CNP16OV, 
+                               nom_dpi$DSPI) %>% 
+  rename("date" = pce_serv.DATE, 
+         "pce_serv" = pce_serv.PCESV,
+         "pce_nondur" = pce_nondur.PCND, 
+         "pce_price_index" = pce_price_index.PCECTPI, 
+         "pop" = pop.CNP16OV,
+         "nom_dpi" = nom_dpi.DSPI) %>% 
+  mutate(date = as_date(date))
+
+# Nominal PCE for services and non-durable goods
+hall_data_approx$nom_pce_serv_nondur <- hall_data_approx$pce_serv + 
+  hall_data_approx$pce_nondur
+
+# Real consumption of services and non-durable goods
+hall_data_approx$real_serv_nondur <- hall_data_approx$nom_pce_serv_nondur/
+  (hall_data_approx$pce_price_index/100)
+
+# Real disposable personal income
+hall_data_approx$real_dpi <- hall_data_approx$nom_dpi/
+  (hall_data_approx$pce_price_index/100)
+
+# Real per-capita consumption of services and non-durable goods
+hall_data_approx$real_serv_nondur_pc_lag0 <- (hall_data_approx$real_serv_nondur/
+                                                hall_data_approx$pop)*1000000
+
+# Real per-capita disposable personal income
+hall_data_approx$real_dpi_pc_lag0 <- (hall_data_approx$real_dpi/
+                                        hall_data_approx$pop)*1000000
+```
+
+\section{Introduction} \label{sec:introduction}
+
+\hspace{1cm} For over 50 years, economists have worked to understand the consumption and savings patterns of United States citizens [cf. @modigliani1954utility]. In a significant contribution to this work, @hall1978stochastic modeled optimal consumption in the current period as a function solely of consumption from the previous period, plus a mean-zero error term (making the model of consumption from this paper a random walk with a trend). @hall1978stochastic examines this model using consumption, income, and stock price data, and largely fails to reject it as a plausible model of optimal consumption behavior. I seek to replicate the results of @hall1978stochastic using updated consumption and income data. Specifically, I aim to answer the question, "After accounting for consumption in the previous period (or equivalently, consumption lagged one period), does consumption lagged two or more periods or income lagged one or more periods have any statistical or economic significance when estimating consumption in the current period?" 
+
+\hspace{1cm} Section \ref{sec:data} contains more detailed information on the data I use, Section \ref{sec:methods} describes the tests I use, \ref{sec:results} details the results of my analysis, and Section \ref{sec:conclusion} summarizes my findings.
+
+\section{Data} \label{sec:data}
+
+\hspace{1cm} I obtain quarterly data on consumption and income from the Federal Reserve Bank of St. Louis's Federal Reserve Economic Data (FRED) database starting from the first quarter of 1960 and extending to the second quarter of 2024; this produces a total of 258 observations. I measure consumption using the nominal personal consumption expenditures on non-durable goods (available in the "PCND" variable) and the nominal personal consumption expenditures on services (available in the "PCESV" variable). As in @hall1978stochastic, I combine these two sources of consumption into a single variable during my analysis. I measure income using nominal disposable personal income (available in the "DSPI" variable). Though this data is gathered monthly, I use quarterly averages. I use the PCE price index (available in the "PCECTPI" variable) to convert nominal values into real values, and I use population counts (available in the "CNP16OV" variable) to convert aggregate values into per-capita values; as with the nominal disposable personal income data, I use quarterly averages rather than monthly values of the population counts. I abbreviate my transformed data on real per-capita consumption of non-durables and services to "CNS", and I abbreviate my transformed data on real per-capita disposable personal income to "DPI". These two variables are displayed in the time series plot below; I use them to perform my analysis, described in Sections \ref{sec:methods} and \ref{sec:results}.
+
+```{r, fig.width=6, fig.align='center', fig.height=4}
+# Time series for real per-capita disposable personal income
+# along with consumption of services and non-durable goods 
+ggplot(aes(x = date), data = hall_data_approx) + 
+  geom_line(aes(y = real_serv_nondur_pc_lag0), color = "blue") + 
+  geom_line(aes(y = real_dpi_pc_lag0), color = "red") + 
+  scale_y_continuous(labels = scales::comma) + 
+  labs(title = "          Per-Capita Real Disposable Personal Income (red) 
+       and Real Consumption of Services and Non-Durables (blue)",
+       subtitle = "1960 Q1 to 2024 Q2",
+       x = "Date",
+       y = "Per-Capita USD") + 
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+```
+
+\section{Methods} \label{sec:methods}
+
+\hspace{1cm} The model for consumption that @hall1978stochastic proposes is
+
+\begin{equation}
+\label{eq:hall_mod}
+c_t = c_{t-1} + \epsilon,
+\end{equation}
+
+where $c_t$ is consumption in the current period, $c_{t-1}$ is consumption lagged one period, and $\epsilon$ is a mean-zero error term. To evaluate the statistical and economic significance of this model, I use two models for lagged consumption and income, given in Equations \ref{eq:cons_alone} and \ref{eq:cons_incom} below.
+
+\begin{equation}
+\label{eq:cons_alone}
+c_t = \beta_0 + \beta_1 c_{t-1} + \beta_2 c_{t-2} + \beta_3 c_{t-3} + \beta_4 c_{t-4} + \epsilon
+\end{equation}
+
+\begin{equation}
+\label{eq:cons_incom}
+c_t = \beta_0 + \beta_1 c_{t-1} + \beta_2 I_{t-1} + \beta_3 I_{t-2} + \beta_4 I_{t-3} + \beta_5 I_{t-4} + \epsilon
+\end{equation}
+
+\hspace{1cm} While Equation \ref{eq:hall_mod} models current consumption solely as a function of consumption from the previous period, Equation \ref{eq:cons_alone} models current consumption as a function of consumption from the previous four periods and Equation \ref{eq:cons_incom} models current consumption as a function of consumption from the previous period *and* income from the previous four periods. If either of these models offer improved predictive power over the model from @hall1978stochastic, then I will have evidence to reject Equation \ref{eq:hall_mod} in favor of one (or both) of the other two models. I can evaluate the predictive power of the model in Equation \ref{eq:cons_alone} using the following null and alternative hypothesis tests.
+
+$$H_0: \beta_1 = 1 \ \text{and} \ \beta_2 = \beta_3 = \beta_4 = 0$$
+$$H_a: \beta_1 \neq 1 \ \text{or at least one of }  \beta_2, \ \beta_3, \text{or} \ \beta_4 \neq 0$$
+\hspace{1cm} Rejecting the null hypothesis here is equivalent to rejecting Equation \ref{eq:hall_mod}, while failing to reject the null hypothesis implies having insufficient evidence to prefer Equation \ref{eq:cons_alone} over Equation \ref{eq:hall_mod}. A similar set of null and alternative hypotheses exist to evaluate the model in Equation \ref{eq:cons_incom}; these hypotheses are given below.
+
+$$H_0: \beta_1 = 1 \ \text{and} \ \beta_2 = \beta_3 = \beta_4 = \beta_5 = 0$$
+$$H_a: \beta_1 \neq 1 \ \text{or at least one of }  \beta_2, \ \beta_3, \ \beta_4, \text{or} \ \beta_5 \neq 0$$
+\hspace{1cm} As with the case of Equation \ref{eq:cons_alone}, rejecting this new null hypothesis is equivalent to rejecting Equation \ref{eq:hall_mod}, while failing to reject the null hypothesis implies having insufficient evidence to prefer Equation \ref{eq:cons_incom} over Equation \ref{eq:hall_mod}.
+
+\hspace{1cm} Though these hypothesis tests are useful in identifying the statistical significance of the coefficients in Equations \ref{eq:cons_alone} and \ref{eq:cons_incom}, I also consider the economic significance of these two models; that is, in the event I reject the null hypothesis for at least one of the two models, I must then examine the coefficient estimates themselves to understand how much more accurate the predictions of current consumption are from the chosen model relative to the model from @hall1978stochastic. 
+
+\section{Results} \label{sec:results}
+
+\hspace{1cm} The results of estimating the regression models given in Equations \ref{eq:cons_alone} and \ref{eq:cons_incom} are presented in Table 1, the results of the hypothesis tests for Equation \ref{eq:cons_alone} are presented in Table 2, and the results of the hypothesis tests for Equation \ref{eq:cons_incom} are presented in Table 3. Note that all of these tables were constructed using the `stargazer` R package developed by Marek Hlavac [@hlavac2022stargazer].
+
+```{r}
+# Perform regression and conduct F tests
+
+# Iteratively create variables for real lagged per-capita consumption 
+# of services and non-durable goods. Note the loss of data entries 
+# in these lagged variables (we lack data prior to 1960 Q1)
+
+# Reorder columns to aid in following for loop
+hall_data_approx <- hall_data_approx[, c(1:9, 11, 10)]
+
+for(i in 1:4){
+  # Calculate lag, add to dataframe
+  hall_data_approx[, i+11] <- lag(hall_data_approx[, i+10])
+  
+  # Rename new variable
+  new_varname <- paste0("real_serv_nondur_pc_lag", i)
+  names(hall_data_approx)[i+11] <- new_varname
+}
+
+# Create linear model
+consum_mod <- lm(real_serv_nondur_pc_lag0 ~ 
+                 real_serv_nondur_pc_lag1 + real_serv_nondur_pc_lag2 + 
+                 real_serv_nondur_pc_lag3 + real_serv_nondur_pc_lag4,
+               data = hall_data_approx)
+
+# Perform appropriate hypothesis test
+ftest_consum_mod <- car::linearHypothesis(consum_mod, c("real_serv_nondur_pc_lag1 = 1",
+                                                        "real_serv_nondur_pc_lag2 = 0",
+                                                        "real_serv_nondur_pc_lag3 = 0",
+                                                        "real_serv_nondur_pc_lag4 = 0"))
+
+######################################################################################################################
+
+# Iteratively create variables for real lagged per-capita disposable 
+# income. Note again the loss of data entries in these lagged variables 
+# (we still lack data prior to 1960 Q1)
+
+# Reorder columns to aid in following for loop
+hall_data_approx <- hall_data_approx[, c(1:9, 11:15, 10)]
+
+for(i in 1:4){
+  # Calculate lag, add to dataframe
+  hall_data_approx[, i+15] <- lag(hall_data_approx[, i+14])
+  
+  # Rename new variable
+  new_varname <- paste0("real_dpi_pc_lag", i)
+  names(hall_data_approx)[i+15] <- new_varname
+}
+
+# Create linear model
+consum_incom_mod <- lm(real_serv_nondur_pc_lag0 ~ 
+                         real_serv_nondur_pc_lag1 + 
+                         real_dpi_pc_lag1 + real_dpi_pc_lag2 + 
+                         real_dpi_pc_lag3 + real_dpi_pc_lag4,
+                       data = hall_data_approx)
+
+# Perform appropriate hypothesis test
+ftest_consum_incom_mod <- car::linearHypothesis(consum_incom_mod, c("real_serv_nondur_pc_lag1 = 1",
+                                                                    "real_dpi_pc_lag1 = 0",
+                                                                    "real_dpi_pc_lag2 = 0",
+                                                                    "real_dpi_pc_lag3 = 0",
+                                                                    "real_dpi_pc_lag4 = 0"))
+```
+
+
+```{r, results='asis', message=FALSE}
+# Display regression output and F test results
+
+# Build tables using stargazer package
+# Regression output
+
+`(2)` <- consum_mod # renaming models to make table easier to interpret
+`(3)` <- consum_incom_mod
+stargazer(`(2)`, `(3)`,
+          title = "Regression Results for Models of Real Consumption (CNS) and Real Income (DPI)",
+          align = TRUE, dep.var.labels.include = FALSE, 
+          column.labels = "CNS in Current Period", column.separate = 2,
+          object.names = TRUE, model.numbers = FALSE,
+          covariate.labels = c("CNS Lagged 1 Period", 
+                               "CNS Lagged 2 Periods", 
+                               "CNS Lagged 3 Periods", 
+                               "CNS Lagged 4 Periods", 
+                               "DPI Lagged 1 Period", 
+                               "DPI Lagged 2 Periods",
+                               "DPI Lagged 3 Periods",
+                               "DPI Lagged 4 Periods", 
+                               "Intercept"),
+          header = FALSE, 
+          notes = c('Consumption is per-capita and is of non-durables and services', 
+                    'Income is per-capita disposable personal income'))
+
+# F test results
+stargazer(ftest_consum_mod, ftest_consum_incom_mod,
+          title = c("F Test Results for Lagged Consumption Regression",
+                    "F Test Results for Lagged Consumption and Income Regression"),
+          header = FALSE,
+          notes = c('The results in Table 2 apply to Equation 2',
+          'The results in Table 3 apply to Equation 3'))
+```
+
+\newpage
+
+\hspace{1cm} Perhaps the two most relevant values in the above three tables are the $p$-values associated with the F test statistics presented at the bottoms of Tables 5 and 6. The $p$-value of about 0.066 given in Table 5 means that, at a 5% level of significance, I lack evidence to prefer the model in Equation \ref{eq:cons_alone} over that from Equation \ref{eq:hall_mod}. The statistical insignificance of this model is coupled with economic insignificance visible in the relatively small estimated coefficients presented in Table 4. However, the $p$-value of less than 0.001 given in Table 6 means that, at a 5% level of significance, I have evidence to prefer the model in Equation \ref{eq:cons_incom} over that from Equation \ref{eq:hall_mod}. Further inspection of Table 4 suggests that income lagged one period has a statistically discernible effect on current consumption, as evidence by the $t$-test performed on the coefficient for the "DPI Lagged 1 Period" variable. Despite this statistically significant result, however, Table 4 also reveals relatively small coefficient estimates for $\beta_2$ through $\beta_5$ in Equation \ref{eq:cons_incom}. This means that, while my hypothesis tests do suggest that income lagged one period has a statistically discernible effect on current consumption, the model from @hall1978stochastic still captures the relationship between current consumption and lagged variables with reasonable accuracy.  
+
+\section{Conclusion} \label{sec:conclusion}
+
+\hspace{1cm} Despite the nearly 50-year gap between my analysis and the analysis of @hall1978stochastic, our results are nearly identical. Specifically, we both find that, while the model of current consumption given in Equation \ref{eq:hall_mod} can be improved by adding additional variables, those additional variables offer little economic significance even if they offer statistical significance. However, the path I take to arrive at this conclusion differs slightly from the route of @hall1978stochastic. Perhaps the greatest difference between our respective analyses is that I do not use stock price data in my analysis and subsequently do not find evidence of a lag between changes in wealth and consumption behavior. Meanwhile, @hall1978stochastic finds that lagged income has neither a statistically significant nor an economically significant effect on current consumption; I find a statistically significant relationship between current consumption and lagged income, but not an economically significant one. These differences in our analyses are likely attributable to the data we use; I do not use stock price data, and @hall1978stochastic does not have access to the date range of data that I use. Despite these differences, the similarities shared between my analysis and that of @hall1978stochastic reinforce the significance of the contribution that paper has made toward the field of economics. 
+
+\section{References} \label{sec:references}
